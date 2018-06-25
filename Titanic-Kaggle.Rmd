@@ -1,0 +1,363 @@
+---
+title: "Titanic-Kaggle"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Kaggle-Titanic: How I got accuracy of ~84%
+
+Below is the data analysis I did in R which yielded an accuracy of around 84%.
+Comments have been added in the code below for better understanding of the code.
+
+```{r}
+train<-read.csv("train.csv")
+transformedtrain<-train
+test<-read.csv("test.csv")
+transformedtest<-test
+
+
+name<-transformedtrain$Name
+nametest<-transformedtest$Name
+
+title<-vector()
+for(i in name){
+  if(grepl(".* Mr. .*",i)){
+    title<-c(title,"Mr")
+  }
+  else if(grepl(".* Mrs. .*",i) | grepl(".*Mrs .*",i)){
+    title<-c(title,"Mrs")
+  }
+  else if(grepl(".* Miss. .*",i)){
+    title<-c(title,"Miss")
+  }
+  else if(grepl(".* Master. .*",i)){
+    title<-c(title,"Master")
+  }
+  else if(grepl(".* Rev. .*",i)){
+    title<-c(title,"Rev")
+  }
+  else if(grepl(".* Dr. .*",i)){
+    title<-c(title,"Dr")
+  }
+  else if(grepl(".* Sir. .*",i)){
+    title<-c(title,"Sir")
+  }
+  else if(grepl(".* Major. .*",i) | grepl(".* Capt. .*",i) | grepl(".* Col. .*",i)){
+    title<-c(title,"Army")
+  }
+  else{
+    title<-c(title,"Misc")
+  }
+}
+transformedtrain$title<-title
+
+library("dplyr")
+explore<-transformedtrain %>% group_by(Sex) %>% summarise(mean(Survived))
+print(explore)
+##as expected female had a better surviving ratio
+
+explore<-transformedtrain %>% group_by(Pclass) %>% summarise(mean(Survived))
+print(explore)
+## 1st class people survived more
+
+
+explore<-transformedtrain %>% group_by(Survived) %>% summarise(mean(SibSp,na.rm = TRUE))
+print(explore)
+
+explore<-transformedtrain %>% group_by(Survived) %>% summarise(mean(Parch,na.rm = TRUE))
+print(explore)
+##those who had parent or child on board had better surviving chances
+
+
+explore<-transformedtrain %>% group_by(Survived) %>% summarise(mean(Fare,na.rm = TRUE))
+print(explore)
+##those who had costlier tickets were given preference
+
+explore<-transformedtrain %>% group_by(Embarked) %>% summarise(mean(Survived))
+print(explore)
+##there is a huge probablity of surviving if you are from C embarkment or ""(which is 1, i.e you will survive everytime)
+##this can also be misleading
+
+
+table(transformedtrain$Embarked)
+##only 2 entried had "" embarkment
+
+explore<-transformedtrain %>% group_by(title) %>% summarise(mean(Survived))
+print(explore)
+## Mrs and Miss have high probability of surviving
+
+library("caret")
+library("rpart")
+library("rpart.plot")
+##Let's do an rf/rpart classification on the given training set
+model1<-train(factor(Survived)~Sex+Pclass+SibSp+Parch+Fare+Embarked,data=transformedtrain,method="rpart")
+##accuracy of ~80%(without tuning and cross validation)
+
+##Let's try to create more variables now from cabin,SibSp,Parch and Age Variable
+Cabin<-ifelse(transformedtrain$Cabin=="",0,1)
+transformedtrain$Cabin<-Cabin
+
+
+explore<-transformedtrain %>% group_by(Cabin) %>% summarise(mean(Survived))
+print(explore)
+##those who had cabin, had a better chance of survival
+
+SibSp<-ifelse(transformedtrain$SibSp>0,1,0)
+transformedtrain$NewSibSp<-SibSp
+
+explore<-transformedtrain %>% group_by(NewSibSp) %>% summarise(mean(Survived))
+print(explore)
+##those who were accompanied by spouse/sibling had a better chance of survival
+
+
+Parch<-ifelse(transformedtrain$Parch>0,1,0)
+transformedtrain$NewParch<-Parch
+
+explore<-transformedtrain %>% group_by(NewParch) %>% summarise(mean(Survived))
+print(explore)
+##those who were accompanied by parent/child had a better chance of survival
+
+
+tr<-trainControl(method = "cv", number = 5)
+cartGrid = expand.grid( .cp = seq(0.0002,0.02,0.0002))
+tunegrid <- expand.grid(.mtry=seq(1,20,1))
+
+transformedtrain$title<-as.factor(transformedtrain$title)
+
+model1<-train(factor(Survived)~Sex+factor(Pclass)+factor(SibSp)+factor(Parch)+factor(NewSibSp)+factor(NewParch)+Fare+Embarked+factor(Cabin)+title,data=transformedtrain,method="rpart",trControl=tr,tuneGrid=cartGrid)
+##accuracy of 83.7%
+
+model2<-train(factor(Survived)~Sex+factor(Pclass)+factor(NewSibSp)+factor(NewParch)+Fare+Embarked+factor(Cabin)+title,data=transformedtrain,method="rf",trControl=tr)
+##accuracy of 82.8%
+
+##Lets set missing Age to -1 (continue from here today)
+
+NAs<-is.na(transformedtrain$Age)
+transformedtrain$Age[NAs==TRUE]<--1
+
+##Let's add agegroup as a factor
+ageGroup<-cut(transformedtrain$Age,breaks = c(-5,0,5,12,18,35,60,80))
+transformedtrain$ageGroup<-ageGroup
+transformedtrain$ageGroup<-as.factor(transformedtrain$ageGroup)
+
+explore<-transformedtrain %>% group_by(ageGroup) %>% summarise(mean(Survived))
+print(explore)
+
+
+
+model1<-train(factor(Survived)~Sex+factor(Pclass)+factor(SibSp)+factor(Parch)+Fare+Embarked+factor(Cabin)+title+ageGroup,data=transformedtrain,method="rpart",trControl=tr,tuneGrid=cartGrid)
+##accuracy of 83%
+
+model2<-train(factor(Survived)~Sex+factor(Pclass)+factor(SibSp)+factor(Parch)+Fare+Embarked+factor(Cabin)+title+ageGroup,data=transformedtrain,method="rf",trControl=tr)
+##accuracy of 82.4%
+
+##adding age group has not increased the accuracy
+
+traincopy<-transformedtrain
+transformedtrain$Name<-NULL
+
+##checking if Ticket has any relation with survival
+explore<-transformedtrain %>% group_by(Ticket) %>% summarise(mean(Survived))
+print(explore)
+
+
+charId<-vector()
+ID<-as.character(transformedtrain$Ticket)
+for(i in ID){
+  if(grepl("^P.*",i)){
+    charId<-c(charId,1)
+  }
+  else
+    charId<-c(charId,0)
+}
+transformedtrain<-cbind(transformedtrain,charId=charId)
+transformedtrain$charId<-as.factor(transformedtrain$charId)
+
+
+explore<-transformedtrain %>% group_by(charId) %>% summarise(mean(Survived))
+print(explore)
+##though we have less observations starting with P but we do see a strong relation among them
+
+
+model1<-train(factor(Survived)~Sex+factor(Pclass)+factor(SibSp)+factor(Parch)+factor(NewSibSp)+factor(NewParch)+Fare+Embarked+factor(Cabin)+title+charId,data=transformedtrain,method="rpart",trControl=tr,tuneGrid=cartGrid)
+##accuracy of 84%
+
+
+model2<-train(factor(Survived)~Sex+factor(Pclass)+factor(SibSp)+factor(Parch)+Fare+Embarked+factor(Cabin)+title+charId,data=transformedtrain,method="rf",trControl=tr)
+##accuracy of 82%
+##Adding charId variable has increased the accuracy 
+
+ageGroup<-vector()
+for(i in transformedtrain$Age)
+{
+  if(i<=0){
+    ageGroup<-c(ageGroup,"Missing")
+  }
+  else if(i<=5 & i>=0){
+    ageGroup<-c(ageGroup,"Infant")
+  }
+  else if(i>=5 & i<=12){
+    ageGroup<-c(ageGroup,"Child")
+  }
+  else if(i>=12 & i<=18){
+    ageGroup<-c(ageGroup,"Adult")
+  }
+  else if(i>=18 & i<=35){
+    ageGroup<-c(ageGroup,"Mature")
+  }
+  else if(i>=35 & i<=60){
+    ageGroup<-c(ageGroup,"Old")
+  }
+  else if(i>=60){
+    ageGroup<-c(ageGroup,"VeryOld")
+  }
+}
+
+transformedtrain$ageGroup<-ageGroup
+transformedtrain$ageGroup<-as.factor(transformedtrain$ageGroup)
+
+explore<-transformedtrain %>% group_by(ageGroup) %>% summarise(mean(Survived))
+print(explore)
+
+model1<-train(factor(Survived)~Sex+factor(Pclass)+factor(SibSp)+factor(Parch)+factor(NewSibSp)+factor(NewParch)+Fare+Embarked+factor(Cabin)+title+charId+ageGroup,data=transformedtrain,method="rpart",trControl=tr,tuneGrid=cartGrid)
+##accuracy of ~82%
+
+model2<-train(factor(Survived)~Sex+factor(Pclass)+factor(SibSp)+factor(Parch)+Fare+Embarked+factor(Cabin)+title+charId+ageGroup,data=transformedtrain,method="rf",trControl=tr)
+##accuracy of ~82%
+##Accuracy not increased as such
+
+
+##Let's try now to segment the fare according to the percentiles
+summary(transformedtrain$Fare)
+densityplot(transformedtrain$Fare)
+
+#NAs<-is.na(transformedtrain$Fare)
+#transformedtrain$Fare[NAs==TRUE]<-14.45
+
+
+fareGroup<-cut(transformedtrain$Fare,breaks = quantile(transformedtrain$Fare,probs=seq(0,1,0.25)),include.lowest=TRUE)
+transformedtrain$fareGroup<-fareGroup
+transformedtrain$fareGroup<-as.factor(transformedtrain$fareGroup)
+
+explore<-transformedtrain %>% group_by(fareGroup) %>% summarise(mean(Survived))
+print(explore)
+##People with higher Ticket price had more chances of surviving
+
+model1<-train(factor(Survived)~Sex+factor(Pclass)+factor(SibSp)+factor(Parch)+factor(SibSp)+factor(Parch)+Embarked+factor(Cabin)+title+fareGroup,data=transformedtrain,method="rpart",trControl=tr,tuneGrid=cartGrid)
+##accuracy of 83.6%
+
+model2<-train(factor(Survived)~Sex+factor(Pclass)+factor(SibSp)+factor(Parch)+Fare+Embarked+factor(Cabin)+title+fareGroup,data=transformedtrain,method="rf",trControl=tr)
+##accuracy of ~82%
+##So not an improvement over the last model
+
+
+transformedtrain$PassengerId<-NULL
+traincopy<-transformedtrain
+traincopy$Survived<-NULL
+traincopy$Ticket<-NULL
+
+###Transforming Test data now
+nametest<-transformedtest$Name
+testtitle<-vector()
+for(i in nametest){
+  if(grepl(".* Mr. .*",i)){
+    testtitle<-c(testtitle,"Mr")
+  }
+  else if(grepl(".* Mrs. .*",i) | grepl(".*Mrs .*",i)){
+    testtitle<-c(testtitle,"Mrs")
+  }
+  else if(grepl(".* Miss. .*",i)){
+    testtitle<-c(testtitle,"Miss")
+  }
+  else if(grepl(".* Master. .*",i)){
+    testtitle<-c(testtitle,"Master")
+  }
+  else if(grepl(".* Rev. .*",i)){
+    testtitle<-c(testtitle,"Rev")
+  }
+  else if(grepl(".* Dr. .*",i)){
+    testtitle<-c(testtitle,"Dr")
+  }
+  else if(grepl(".* Sir. .*",i)){
+    testtitle<-c(testtitle,"Sir")
+  }
+  else if(grepl(".* Major. .*",i) | grepl(".* Capt. .*",i) | grepl(".* Col. .*",i)){
+    testtitle<-c(testtitle,"Army")
+  }
+  else{
+    testtitle<-c(testtitle,"Misc")
+  }
+}
+transformedtest$title<-testtitle
+Cabin<-ifelse(transformedtest$Cabin=="",0,1)
+transformedtest$Cabin<-Cabin
+SibSp<-ifelse(transformedtest$SibSp>0,1,0)
+transformedtest$NewSibSp<-SibSp
+Parch<-ifelse(transformedtest$Parch>0,1,0)
+transformedtest$NewParch<-Parch
+ageGroup<-cut(transformedtest$Age,breaks = c(-5,0,5,12,18,35,60,80))
+transformedtest$ageGroup<-ageGroup
+transformedtest$ageGroup<-as.factor(transformedtest$ageGroup)
+charId<-vector()
+ID<-as.character(transformedtest$Ticket)
+for(i in ID){
+  if(grepl("^P.*",i)){
+    charId<-c(charId,1)
+  }
+  else
+    charId<-c(charId,0)
+}
+transformedtest<-cbind(transformedtest,charId=charId)
+transformedtest$charId<-as.factor(transformedtest$charId)
+NAs<-is.na(transformedtest$Age)
+transformedtest$Age[NAs==TRUE]<--1
+ageGroup<-vector()
+for(i in transformedtest$Age)
+{
+  if(i<=0){
+    ageGroup<-c(ageGroup,"Missing")
+  }
+  else if(i<=5 & i>=0){
+    ageGroup<-c(ageGroup,"Infant")
+  }
+  else if(i>=5 & i<=12){
+    ageGroup<-c(ageGroup,"Child")
+  }
+  else if(i>=12 & i<=18){
+    ageGroup<-c(ageGroup,"Adult")
+  }
+  else if(i>=18 & i<=35){
+    ageGroup<-c(ageGroup,"Mature")
+  }
+  else if(i>=35 & i<=60){
+    ageGroup<-c(ageGroup,"Old")
+  }
+  else if(i>=60){
+    ageGroup<-c(ageGroup,"VeryOld")
+  }
+}
+transformedtest$ageGroup<-ageGroup
+transformedtest$ageGroup<-as.factor(transformedtest$ageGroup)
+transformedtest$Name<-NULL
+transformedtest$Ticket<-NULL
+library("mice")
+library("missForest")
+imputeddata<-mice(transformedtest,method="norm.predict")
+completedata<-complete(imputeddata,2)
+
+###end
+
+
+##using the best model to predict
+model1<-train(factor(Survived)~Sex+factor(Pclass)+factor(SibSp)+Parch+factor(NewSibSp)+factor(NewParch)+Fare+Embarked+factor(Cabin)+title,data=transformedtrain,method="rpart",trControl=tr,tuneGrid=cartGrid)
+output<-predict(model1,newdata=completedata)
+
+df<-data.frame(PassengerId=completedata$PassengerId,Survived=output)
+write.csv(df,"final_submission.csv",row.names = FALSE)
+
+```
+
+
